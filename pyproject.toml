@@ -22,7 +22,7 @@ packages = ["src/flight_monitor"]
 
 [dependency-groups]
 dev = [
-    "pytest>=7.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.21",
     "mypy>=1.0",
     "ruff>=0.1",
