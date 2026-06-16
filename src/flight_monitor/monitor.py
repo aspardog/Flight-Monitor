@@ -255,7 +255,14 @@ class FlightMonitor:
 
         print("\n[Monitor] Chequeo completado.")
         checks_ok = all(result.succeeded for result in results)
-        run_ok = bool(results) and checks_ok and summary_sent
-        if not run_ok:
-            print("[Monitor] Ejecucion marcada para reintento.")
-        return run_ok
+
+        # Primary success: flight checks worked
+        # Notification failures are warnings, not fatal errors
+        if not checks_ok or not results:
+            print("[Monitor] Ejecucion marcada para reintento (fallos en chequeo).")
+            return False
+
+        if not summary_sent:
+            print("[Monitor] AVISO: Notificaciones fallaron pero el chequeo fue exitoso.")
+
+        return True
