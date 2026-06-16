@@ -1,7 +1,7 @@
 """Base protocol and utilities for notification plugins."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -67,11 +67,24 @@ class FlightCheckResult:
     discount_pct: float = 0.0  # Percentage below typical_price_low
     recommended: bool = False  # True if price is below typical_price_low
     error_message: Optional[str] = None
+    # Alternative airport results (only for primary flights with check_alternatives)
+    alternatives: list["FlightCheckResult"] = field(default_factory=list)
+    is_alternative: bool = False  # True if this is an alternative route check
 
     @property
     def succeeded(self) -> bool:
         """Return whether the flight check produced a valid offer."""
         return self.offer is not None and self.error_message is None
+
+    @property
+    def cheaper_alternatives(self) -> list["FlightCheckResult"]:
+        """Return alternatives that are cheaper than this flight."""
+        if not self.offer:
+            return []
+        return [
+            alt for alt in self.alternatives
+            if alt.offer and alt.offer.price < self.offer.price
+        ]
 
 
 class Notifier(ABC):

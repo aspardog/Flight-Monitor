@@ -79,20 +79,65 @@ class FlightMonitor:
 
         return should_buy, discount_pct
 
-    def check_flight(self, flight: FlightConfig) -> FlightCheckResult:
+    def get_destination_alternatives(self, destination: str) -> list[str]:
+        """Get alternative destination airports for a given airport code."""
+        return self.config.airport_alternatives.get(destination, [])
+
+    def expand_with_alternatives(self, flight: FlightConfig) -> list[FlightConfig]:
+        """
+        Expand a flight into primary + destination alternatives.
+
+        Only expands if check_alternatives is True for the flight.
+        Origin stays fixed, only destination varies.
+
+        Args:
+            flight: Primary flight configuration
+
+        Returns:
+            List with primary flight first, followed by alternative destinations
+        """
+        flights = [flight]
+
+        if not flight.check_alternatives:
+            return flights
+
+        alt_destinations = self.get_destination_alternatives(flight.destination)
+        for alt_dest in alt_destinations:
+            alt_flight = FlightConfig(
+                origin=flight.origin,
+                destination=alt_dest,
+                depart_date=flight.depart_date,
+                return_date=flight.return_date,
+                adults=flight.adults,
+                currency=flight.currency,
+                check_alternatives=False,  # Don't recurse
+            )
+            flights.append(alt_flight)
+
+        if alt_destinations:
+            print(
+                f"[Alternatives] {flight.origin}->{flight.destination}: "
+                f"chequeando {len(alt_destinations)} alternativa(s): {', '.join(alt_destinations)}"
+            )
+
+        return flights
+
+    def check_flight(self, flight: FlightConfig, is_alternative: bool = False) -> FlightCheckResult:
         """
         Check price for a single flight.
 
         Args:
             flight: Flight configuration to check
+            is_alternative: Whether this is an alternative airport check
 
         Returns:
             FlightCheckResult with offer details or failure metadata
         """
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         route = f"{flight.origin} -> {flight.destination}"
+        alt_label = " [ALT]" if is_alternative else ""
         print(f"\n{'='*50}")
-        print(f"[{now}] Chequeando {route} ({flight.depart_date})")
+        print(f"[{now}] Chequeando {route} ({flight.depart_date}){alt_label}")
 
         # 1. Fetch current price with Google's price insights
         offer = self.client.fetch_cheapest_offer(flight)
@@ -104,6 +149,7 @@ class FlightMonitor:
                 depart_date=flight.depart_date,
                 return_date=flight.return_date,
                 error_message="No se pudo obtener precio desde SerpApi.",
+                is_alternative=is_alternative,
             )
 
         category_label = "LOW" if offer.price_category == "best" else "OTHER"
@@ -148,23 +194,56 @@ class FlightMonitor:
             offer=offer,
             discount_pct=discount_pct,
             recommended=should_buy,
+            is_alternative=is_alternative,
         )
 
     async def check_all_flights_async(self) -> list[FlightCheckResult]:
-        """Check all configured flights concurrently."""
+        """Check all configured flights concurrently, including alternatives."""
         if not self.config.flights:
             print("[Monitor] No hay vuelos configurados.")
             return []
 
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=len(self.config.flights)) as executor:
-            tasks = [
-                loop.run_in_executor(executor, self.check_flight, flight)
-                for flight in self.config.flights
-            ]
-            results = await asyncio.gather(*tasks)
+        # Build list of all flights to check (primary + alternatives)
+        # Track which primary flight each expanded flight belongs to
+        all_flights: list[tuple[int, FlightConfig, bool]] = []  # (primary_idx, flight, is_alt)
 
-        return results
+        for idx, primary_flight in enumerate(self.config.flights):
+            expanded = self.expand_with_alternatives(primary_flight)
+            for i, flight in enumerate(expanded):
+                is_alt = i > 0  # First one is primary, rest are alternatives
+                all_flights.append((idx, flight, is_alt))
+
+        # Run all checks in parallel
+        loop = asyncio.get_event_loop()
+        max_workers = max(len(all_flights), 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            tasks = [
+                loop.run_in_executor(
+                    executor, self.check_flight, flight, is_alt
+                )
+                for _, flight, is_alt in all_flights
+            ]
+            all_results = await asyncio.gather(*tasks)
+
+        # Group results: attach alternatives to their primary flights
+        primary_results: dict[int, FlightCheckResult] = {}
+        alternatives_by_primary: dict[int, list[FlightCheckResult]] = {}
+
+        for (primary_idx, _, is_alt), result in zip(all_flights, all_results):
+            if not is_alt:
+                primary_results[primary_idx] = result
+            else:
+                if primary_idx not in alternatives_by_primary:
+                    alternatives_by_primary[primary_idx] = []
+                alternatives_by_primary[primary_idx].append(result)
+
+        # Attach alternatives to primary results
+        for primary_idx, alternatives in alternatives_by_primary.items():
+            if primary_idx in primary_results:
+                primary_results[primary_idx].alternatives = alternatives
+
+        # Return in original order
+        return [primary_results[i] for i in range(len(self.config.flights))]
 
     def check_all_flights(self) -> list[FlightCheckResult]:
         """Check all configured flights (sync wrapper)."""

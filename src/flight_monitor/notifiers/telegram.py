@@ -168,6 +168,20 @@ class TelegramNotifier(Notifier):
                 else:
                     lines.append("   ⏳ Esperar mejor precio")
 
+                # Cheaper alternatives
+                cheaper_alts = result.cheaper_alternatives
+                if cheaper_alts:
+                    lines.append("   _Alternativas:_")
+                    for alt in cheaper_alts:
+                        if alt.offer:
+                            savings = offer.price - alt.offer.price
+                            alt_route = f"{alt.origin}→{alt.destination}"
+                            lines.append(
+                                f"   • {alt_route}: "
+                                f"{alt.offer.currency} {alt.offer.price:,.0f} "
+                                f"(-{savings:,.0f})"
+                            )
+
                 lines.append("")
 
         # Footer

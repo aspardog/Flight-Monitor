@@ -226,6 +226,19 @@ class EmailNotifier(Notifier):
         lines.append(f"     {gf_url}")
         lines.append("")
 
+        # Cheaper alternatives section
+        cheaper_alts = result.cheaper_alternatives
+        if cheaper_alts:
+            lines.append("  ─── Alternativas mas baratas ───")
+            for alt in cheaper_alts:
+                if alt.offer:
+                    savings = offer.price - alt.offer.price
+                    alt_route = f"{alt.origin}→{alt.destination}"
+                    alt_price = f"{alt.offer.currency} {alt.offer.price:,.0f}"
+                    savings_str = f"({offer.currency} {savings:,.0f} menos)"
+                    lines.append(f"    • {alt_route}: {alt_price} {savings_str}")
+            lines.append("")
+
         return lines
 
     def send_summary(self, results: list[FlightCheckResult]) -> bool:

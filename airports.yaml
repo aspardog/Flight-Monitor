@@ -1,0 +1,31 @@
+# Nearby airport alternatives by metro area
+# Used when check_alternatives: true is set for a flight
+# Only destination alternatives are checked (origin stays fixed)
+
+alternatives:
+  # Colombia
+  BOG: [MDE, CTG]           # Bogota -> Medellin, Cartagena
+  MDE: [BOG, CTG]
+  CTG: [BOG, MDE]
+
+  # US East Coast
+  JFK: [EWR, LGA]           # NYC area
+  EWR: [JFK, LGA]
+  LGA: [JFK, EWR]
+  IAD: [DCA, BWI]           # DC area
+  DCA: [IAD, BWI]
+  BWI: [IAD, DCA]
+
+  # US Florida
+  MIA: [FLL, PBI]           # Miami area
+  FLL: [MIA, PBI]
+  PBI: [MIA, FLL]
+
+  # Peru
+  LIM: []                   # Lima - no nearby alternatives
+
+  # Spain
+  MAD: []                   # Madrid - no practical alternatives
+  BCN: [GRO, REU]           # Barcelona -> Girona, Reus
+
+  # Add more airports as needed

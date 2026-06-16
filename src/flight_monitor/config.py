@@ -18,6 +18,7 @@ class FlightConfig:
     return_date: Optional[str] = None
     adults: int = 1
     currency: str = "USD"
+    check_alternatives: bool = False  # Opt-in for alternative airports
 
 
 @dataclass
@@ -48,6 +49,24 @@ class AppConfig:
     # Flights to monitor
     flights: list[FlightConfig] = field(default_factory=list)
 
+    # Airport alternatives mapping (destination -> [alternative destinations])
+    airport_alternatives: dict[str, list[str]] = field(default_factory=dict)
+
+
+def load_airport_alternatives(path: Path) -> dict[str, list[str]]:
+    """Load airport alternatives mapping from YAML file."""
+    if not path.exists():
+        return {}
+
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+
+    if not data or "alternatives" not in data:
+        return {}
+
+    alternatives: dict[str, list[str]] = data["alternatives"]
+    return alternatives
+
 
 def load_flights_from_yaml(path: Path) -> list[FlightConfig]:
     """Load flight configurations from a YAML file."""
@@ -69,18 +88,24 @@ def load_flights_from_yaml(path: Path) -> list[FlightConfig]:
             return_date=flight_data.get("return_date"),
             adults=flight_data.get("adults", 1),
             currency=flight_data.get("currency", "USD"),
+            check_alternatives=flight_data.get("check_alternatives", False),
         ))
 
     return flights
 
 
-def load_config(env_path: Optional[Path] = None, flights_path: Optional[Path] = None) -> AppConfig:
+def load_config(
+    env_path: Optional[Path] = None,
+    flights_path: Optional[Path] = None,
+    airports_path: Optional[Path] = None,
+) -> AppConfig:
     """
     Load configuration from environment variables and optional YAML file.
 
     Args:
         env_path: Path to .env file (default: looks in current directory)
         flights_path: Path to flights.yaml file (default: looks in current directory)
+        airports_path: Path to airports.yaml file (default: looks in current directory)
 
     Returns:
         AppConfig with all settings loaded
@@ -94,6 +119,10 @@ def load_config(env_path: Optional[Path] = None, flights_path: Optional[Path] = 
     # Load flights from YAML
     flights_file = flights_path or Path("flights.yaml")
     flights = load_flights_from_yaml(flights_file)
+
+    # Load airport alternatives
+    airports_file = airports_path or Path("airports.yaml")
+    airport_alternatives = load_airport_alternatives(airports_file)
     scheduled_times_raw = os.getenv("SCHEDULED_TIMES", "11:00")
     scheduled_times = [item.strip() for item in scheduled_times_raw.split(",") if item.strip()]
 
@@ -129,4 +158,5 @@ def load_config(env_path: Optional[Path] = None, flights_path: Optional[Path] = 
             "SCHEDULER_STATE_PATH", ".flight_monitor_scheduler.json"
         ),
         flights=flights,
+        airport_alternatives=airport_alternatives,
     )
