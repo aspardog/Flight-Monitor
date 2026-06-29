@@ -168,6 +168,12 @@ class EmailNotifier(Notifier):
 
         lines.append("")
 
+        if result.date_unavailable:
+            lines.append("  ℹ️  Estado:     Fecha no disponible")
+            lines.append("  📋 Detalle:    La fecha ya no esta disponible.")
+            lines.append("")
+            return lines
+
         # Error case
         if not result.succeeded or result.offer is None:
             error_detail = result.error_message or "No se pudo consultar el vuelo"

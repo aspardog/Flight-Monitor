@@ -20,8 +20,10 @@ class FakeClient:
 
     def __init__(self, offer: FlightOffer | None):
         self.offer = offer
+        self.calls: list[FlightConfig] = []
 
     def fetch_cheapest_offer(self, flight: FlightConfig) -> FlightOffer | None:
+        self.calls.append(flight)
         return self.offer
 
 
@@ -197,6 +199,36 @@ class FlightMonitorTests(unittest.TestCase):
         self.assertFalse(succeeded)
         self.assertEqual(len(notifier.summaries), 1)
         self.assertFalse(notifier.summaries[0][0].succeeded)
+
+    def test_run_once_marks_past_departure_date_unavailable(self) -> None:
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        flight = FlightConfig(
+            origin="BOG",
+            destination="MIA",
+            depart_date=yesterday,
+        )
+        config = AppConfig(
+            serpapi_key="unused",
+            db_path=self.db_path,
+            flights=[flight],
+        )
+        notifier = RecordingNotifier()
+        client = FakeClient(None)
+        monitor = FlightMonitor(
+            config,
+            client,
+            SQLiteStorage(self.db_path),
+            [notifier],
+        )
+
+        succeeded = monitor.run_once()
+
+        self.assertTrue(succeeded)
+        self.assertEqual(client.calls, [])
+        result = notifier.summaries[0][0]
+        self.assertTrue(result.succeeded)
+        self.assertTrue(result.date_unavailable)
+        self.assertIsNone(result.error_message)
 
 
 class RetrySchedulerTests(unittest.TestCase):

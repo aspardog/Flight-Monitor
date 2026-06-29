@@ -83,6 +83,15 @@ class FlightMonitor:
         """Get alternative destination airports for a given airport code."""
         return self.config.airport_alternatives.get(destination, [])
 
+    def is_departure_date_unavailable(self, flight: FlightConfig) -> bool:
+        """Return whether the departure date has already passed."""
+        try:
+            depart_date = datetime.strptime(flight.depart_date, "%Y-%m-%d").date()
+        except ValueError:
+            return False
+
+        return depart_date < datetime.now().date()
+
     def expand_with_alternatives(self, flight: FlightConfig) -> list[FlightConfig]:
         """
         Expand a flight into primary + destination alternatives.
@@ -138,6 +147,18 @@ class FlightMonitor:
         alt_label = " [ALT]" if is_alternative else ""
         print(f"\n{'='*50}")
         print(f"[{now}] Chequeando {route} ({flight.depart_date}){alt_label}")
+
+        if self.is_departure_date_unavailable(flight):
+            message = "La fecha ya no esta disponible."
+            print(f"[Monitor] {message} {route} ({flight.depart_date}).")
+            return FlightCheckResult(
+                origin=flight.origin,
+                destination=flight.destination,
+                depart_date=flight.depart_date,
+                return_date=flight.return_date,
+                date_unavailable=True,
+                is_alternative=is_alternative,
+            )
 
         # 1. Fetch current price with Google's price insights
         offer = self.client.fetch_cheapest_offer(flight)

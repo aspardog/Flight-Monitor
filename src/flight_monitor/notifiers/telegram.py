@@ -131,6 +131,11 @@ class TelegramNotifier(Notifier):
                 else:
                     lines.append(f"   🗓 {depart_fmt} (solo ida)")
 
+                if result.date_unavailable:
+                    lines.append("   ℹ️ La fecha ya no esta disponible.")
+                    lines.append("")
+                    continue
+
                 if not result.succeeded or result.offer is None:
                     error_detail = result.error_message or "Error al consultar"
                     lines.append(f"   ❌ {error_detail}")
