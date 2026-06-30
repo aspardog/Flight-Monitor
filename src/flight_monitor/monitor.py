@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional, Protocol
 
 from .config import AppConfig, FlightConfig
@@ -85,10 +85,15 @@ class FlightMonitor:
 
     def is_departure_date_unavailable(self, flight: FlightConfig) -> bool:
         """Return whether the departure date has already passed."""
-        try:
-            depart_date = datetime.strptime(flight.depart_date, "%Y-%m-%d").date()
-        except ValueError:
-            return False
+        depart = flight.depart_date
+        # Handle both date objects (from YAML auto-parsing) and strings
+        if isinstance(depart, date):
+            depart_date = depart
+        else:
+            try:
+                depart_date = datetime.strptime(depart, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                return False
 
         return depart_date < datetime.now().date()
 

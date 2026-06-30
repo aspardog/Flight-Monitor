@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +69,15 @@ def load_airport_alternatives(path: Path) -> dict[str, list[str]]:
     return alternatives
 
 
+def _normalize_date(value: str | date | None) -> str | None:
+    """Convert date objects to ISO format strings (YAML may parse dates automatically)."""
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    return str(value)
+
+
 def load_flights_from_yaml(path: Path) -> list[FlightConfig]:
     """Load flight configurations from a YAML file."""
     if not path.exists():
@@ -84,8 +94,8 @@ def load_flights_from_yaml(path: Path) -> list[FlightConfig]:
         flights.append(FlightConfig(
             origin=flight_data["origin"],
             destination=flight_data["destination"],
-            depart_date=flight_data["depart_date"],
-            return_date=flight_data.get("return_date"),
+            depart_date=_normalize_date(flight_data["depart_date"]),  # type: ignore[arg-type]
+            return_date=_normalize_date(flight_data.get("return_date")),
             adults=flight_data.get("adults", 1),
             currency=flight_data.get("currency", "USD"),
             check_alternatives=flight_data.get("check_alternatives", False),
