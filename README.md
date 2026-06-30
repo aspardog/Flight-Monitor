@@ -13,6 +13,7 @@
 - **Multi-vuelo**: Monitorea multiples rutas simultaneamente con ejecucion concurrente
 - **Clasificacion inteligente**: Distingue entre precios LOW (mejores ofertas) y OTHER usando la clasificacion de Google Flights
 - **Alertas precisas**: Recomienda comprar cuando el precio esta **por debajo del rango tipico de Google Flights**
+- **Aeropuertos alternativos**: Opcionalmente compara destinos cercanos definidos en `airports.yaml`
 - **Notificaciones flexibles**: Soporte para Email (Gmail SMTP) y Telegram Bot (multiples destinatarios)
 - **Persistencia**: Almacena todo el historial de precios en SQLite para analisis
 - **Optimizado para API limitada**: Disenado para el plan gratuito de SerpApi (250 llamadas/mes)
@@ -36,7 +37,8 @@ cp .env.example .env
 # Editar .env con tu API key de SerpApi y credenciales de notificacion
 
 # 4. Configurar vuelos a monitorear
-# Crea flights.yaml con tus rutas (ver seccion Configuracion > Vuelos)
+cp flights.yaml.example flights.yaml
+# Editar flights.yaml con tus rutas
 
 # 5. Ejecutar
 uv run --no-editable python -m flight_monitor --once
@@ -79,7 +81,7 @@ uv run --no-editable python -m flight_monitor --once
 │                          │   (Orquestador)     │                           │
 │                          │                     │                           │
 │                          │ - check_flight()    │                           │
-│                          │ - should_alert()    │                           │
+│                          │ - should_recommend()│                           │
 │                          │ - run() / run_once()│                           │
 │                          └─────────────────────┘                           │
 │                                                                             │
@@ -111,6 +113,7 @@ flight-monitor/
 │
 ├── .env.example                 # Plantilla de variables de entorno
 ├── flights.yaml.example         # Plantilla de vuelos a monitorear
+├── airports.yaml                # Mapa de aeropuertos alternativos
 ├── pyproject.toml               # Configuracion del proyecto (UV/pip)
 └── README.md
 ```
@@ -298,6 +301,7 @@ Cada corrida envia un **resumen** de todos los vuelos monitoreados con formato v
 - 📅 Fechas en español (Lun, Mar, Mie...) con dia de semana
 - ⏱️ Duracion del viaje y tiempo de vuelo
 - 🟢🟡🔴 Indicadores visuales de precio (bajo/tipico/alto)
+- 🧭 Alternativas mas baratas cuando `check_alternatives: true`
 - 🔗 Links directos a Google Flights
 - 📊 Resumen rapido al inicio
 
@@ -360,7 +364,7 @@ DB_PATH=flight_prices.db             # Ruta base de datos SQLite
 CHECK_INTERVAL_MINUTES=60            # Intervalo en modo continuo
 SCHEDULED_TIMES=11:00                # Horario base para modo programado
 SERPAPI_MIN_SEARCHES_LEFT=5          # Umbral para detenerse antes de agotar cuota
-RETRY_DELAY_MINUTES=60               # Reintento cuando falle una corrida
+RETRY_DELAY_MINUTES=60               # Reintento cuando falle un chequeo
 SCHEDULER_STATE_PATH=.flight_monitor_scheduler.json
 ```
 
@@ -396,7 +400,26 @@ flights:
     destination: LIM
     depart_date: "2026-09-14"
     currency: COP
+
+  # Comparar tambien aeropuertos alternativos del destino
+  - origin: BOG
+    destination: MIA
+    depart_date: "2026-12-01"
+    return_date: "2026-12-15"
+    currency: USD
+    check_alternatives: true
 ```
+
+### Aeropuertos Alternativos (`airports.yaml`)
+
+Si un vuelo tiene `check_alternatives: true`, el monitor consulta la ruta principal y
+las alternativas del destino configuradas en `airports.yaml`. El origen no cambia.
+
+Ejemplo: con `destination: MIA`, el archivo incluido consulta tambien `FLL` y `PBI`.
+Las alternativas se reportan en el resumen cuando son mas baratas que la ruta principal.
+
+Cada alternativa consume una busqueda adicional de SerpApi. Una ruta con dos
+alternativas equivale a tres consultas de vuelos por corrida.
 
 ---
 
@@ -410,7 +433,9 @@ uv run --no-editable python -m flight_monitor --once
 
 Ejecuta un solo chequeo de todos los vuelos y termina. Ideal para **cron jobs**.
 
-Si falla alguna consulta o el envio del resumen, el proceso termina con codigo de error.
+Si falla alguna consulta de vuelos, el proceso termina con codigo de error. Si el chequeo
+de vuelos fue exitoso pero falla una notificacion, el proceso solo imprime un aviso para
+evitar repetir consultas ya completadas.
 
 ### Modo Programado con Reintentos
 
@@ -427,7 +452,10 @@ Este modo consulta el archivo de estado y solo corre cuando:
 Sirve para recuperarse de dos casos:
 
 - el equipo o `cron` no ejecuto la corrida del horario previsto
-- la corrida si arranco pero fallo por red, SerpApi o el notificador
+- la corrida si arranco pero fallo por red o SerpApi
+
+Los fallos de email o Telegram no fuerzan reintento si las consultas de vuelos ya fueron
+exitosas.
 
 ### Modo Continuo
 
@@ -458,7 +486,9 @@ Con `SCHEDULED_TIMES=11:00`:
 
 ### Configuracion con launchd (macOS)
 
-El directorio `launchd/` incluye una plantilla para `launchd` (el equivalente a cron en macOS). Se ejecuta una vez al dia a las 11:00:
+El directorio `launchd/` incluye una plantilla para `launchd` (el equivalente a cron en
+macOS). La plantilla incluida invoca `--scheduled` a las 11:00 y tambien al cargar el
+agente:
 
 ```bash
 # Crear una copia local y ajustar la ruta del proyecto
@@ -475,6 +505,10 @@ tail -f monitor.log
 # Desinstalar
 launchctl unload ~/Library/LaunchAgents/com.flight-monitor.plist
 ```
+
+Para tener reintentos el mismo dia con `launchd`, la invocacion debe ocurrir mas de una
+vez al dia, por ejemplo cada hora. `--scheduled` decide si realmente hay una ventana
+pendiente antes de consumir SerpApi.
 
 ### Configuracion con GitHub Actions (Recomendado)
 
@@ -498,6 +532,9 @@ Antes de consultar vuelos, el programa llama al Account API de SerpApi para veri
 | `EMAIL_RECEIVER` | Correo(s) destino, separados por coma | No |
 | `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram | No |
 | `TELEGRAM_CHAT_ID` | Chat ID de Telegram | No |
+
+El workflow usa el umbral por defecto `SERPAPI_MIN_SEARCHES_LEFT=5`. Para cambiarlo en
+GitHub Actions, agrega esa variable al paso `Run flight monitor`.
 
 **Ejemplo de `FLIGHTS_YAML`:**
 
@@ -683,6 +720,9 @@ client = AmadeusClient(
 | 4 | 2 | 240 | OK |
 | 5 | 2 | 300 | Excede limite |
 
+Cuenta cada ruta consultada. Si activas `check_alternatives`, suma la ruta principal y
+cada destino alternativo.
+
 ### Recomendaciones
 
 - **1 vuelo**: Hasta 3 chequeos/dia (90 llamadas/mes)
@@ -759,6 +799,12 @@ Asegurate de que `.env` existe y contiene `SERPAPI_KEY=tu_key`.
 ### Error: "No hay vuelos configurados"
 
 Crea `flights.yaml` basado en `flights.yaml.example`.
+
+### Error: "Cuota SerpApi baja"
+
+El monitor se detiene antes de gastar mas busquedas cuando la cuota restante es menor o
+igual a `SERPAPI_MIN_SEARCHES_LEFT`. Sube el umbral si quieres mas margen, o bajalo si
+aceptas acercarte mas al limite mensual.
 
 ### No llegan emails
 

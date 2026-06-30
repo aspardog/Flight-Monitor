@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Flight Monitor tracks flight prices using Google Flights (via SerpApi) and sends a **daily summary** (email/Telegram) with purchase recommendations based on Google's typical price range. Supports monitoring multiple flights concurrently.
+Flight Monitor tracks flight prices using Google Flights (via SerpApi) and sends a **daily summary** (email/Telegram) with purchase recommendations based on Google's typical price range. Supports monitoring multiple flights concurrently, including optional destination-airport alternatives from `airports.yaml`.
 
 ## Commands (UV)
 
@@ -33,14 +33,14 @@ uv run --no-editable python -m unittest discover -s tests -v
 
 ## Scheduled Execution
 
-The recommended production setup uses `--scheduled` with an hourly cron/launchd job. The scheduler reads a JSON state file and only runs when a configured time slot is due or a previous run failed:
+The recommended production setup uses `--scheduled` with an hourly cron/launchd job. The scheduler reads a JSON state file and only runs when a configured time slot is due or a previous flight-check run failed:
 
 ```bash
 # cron: run every hour, execute only at 10:00, 15:30 or their retries
 0 * * * * cd /path/to/Flight-Monitor && uv run --no-editable python -m flight_monitor --scheduled >> monitor.log 2>&1
 ```
 
-**macOS launchd**: use `launchd/com.flight-monitor.plist.example` as a template for an hourly LaunchAgent.
+**macOS launchd**: use `launchd/com.flight-monitor.plist.example` as a template. The checked-in template runs at 11:00 and at load; configure a more frequent `StartCalendarInterval` if same-day retries are required.
 
 **API usage with 2 flights and 2 slots/day:**
 - 2 checks/day × 2 flights = 4 API calls/day (~120/month)
@@ -89,10 +89,11 @@ src/flight_monitor/
 **Data flow:**
 1. `__main__.py` loads config and injects dependencies into `FlightMonitor`
 2. `FlightMonitor.check_all_flights_async()` spawns concurrent checks
-3. `SerpApiClient.fetch_cheapest_offer()` queries Google Flights, returns `FlightOffer` with `typical_price_low`, `typical_price_high`, `price_level`, `total_duration`
-4. `SQLiteStorage.insert_price()` persists the record
-5. `FlightMonitor.should_recommend()` compares `offer.price` vs `offer.typical_price_low` — recommends if price is below the typical range lower bound
-6. `FlightMonitor._send_summary()` calls `notifier.send_summary(results)` on all configured notifiers
+3. `FlightMonitor.expand_with_alternatives()` adds destination alternatives when `check_alternatives: true`
+4. `SerpApiClient.fetch_cheapest_offer()` queries Google Flights, returns `FlightOffer` with `typical_price_low`, `typical_price_high`, `price_level`, `total_duration`
+5. `SQLiteStorage.insert_price()` persists the record
+6. `FlightMonitor.should_recommend()` compares `offer.price` vs `offer.typical_price_low` — recommends if price is below the typical range lower bound
+7. `FlightMonitor._send_summary()` calls `notifier.send_summary(results)` on all configured notifiers
 
 ## Notification Features
 
@@ -103,6 +104,9 @@ Both Email and Telegram notifiers include:
 - **Visual price indicators**: 🟢 (low/buy), 🟡 (typical), 🔴 (high)
 - **Quick summary table**: Overview of all flights at the top (email only)
 - **Google Flights links**: Direct search URLs (email only)
+- **Cheaper alternatives**: shown when destination alternatives are enabled and cheaper than the primary route
+
+Notification failures are warnings after successful flight checks. They do not make `run_once()` fail or trigger a scheduled retry.
 
 ## Alert Logic
 
@@ -137,9 +141,15 @@ flights:
     return_date: "2026-12-15"  # optional
     adults: 1                  # optional, default 1
     currency: USD              # optional, default USD
+    check_alternatives: true    # optional, default false; uses airports.yaml
 ```
 
 Backwards-compatible: single flight can also be set via `FLIGHT_ORIGIN`, `FLIGHT_DESTINATION`, `FLIGHT_DEPART_DATE` env vars.
+
+**Airport alternatives** (`airports.yaml`):
+- Only destination alternatives are expanded; the origin remains fixed.
+- Each alternative destination is an additional SerpApi flight search.
+- Alternatives are attached to the primary result and reported only when cheaper.
 
 ## Adding a New Notifier
 

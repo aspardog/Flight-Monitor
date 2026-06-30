@@ -23,6 +23,16 @@ flights:
     adults: 2
     currency: EUR
 
+  # Ejemplo 3: Comparar aeropuertos alternativos del destino
+  # Las alternativas se leen de airports.yaml. Para MIA tambien revisa FLL y PBI.
+  - origin: BOG
+    destination: MIA
+    depart_date: "2026-12-01"
+    return_date: "2026-12-15"
+    adults: 1
+    currency: USD
+    check_alternatives: true
+
 # Codigos IATA comunes:
 # BOG = Bogota       MDE = Medellin     CLO = Cali
 # MIA = Miami        JFK = New York     LAX = Los Angeles
