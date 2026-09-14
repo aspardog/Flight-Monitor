@@ -8,6 +8,7 @@ from typing import Optional
 @dataclass
 class FlightOffer:
     """Represents a flight offer."""
+
     price: float
     currency: str
     airline: str
@@ -22,9 +23,9 @@ class FlightOffer:
     # Flight duration in minutes
     total_duration: Optional[int] = None  # Total flight time in minutes
     # Price insights from Google Flights
-    typical_price_low: Optional[float] = None   # Lower bound of typical range
+    typical_price_low: Optional[float] = None  # Lower bound of typical range
     typical_price_high: Optional[float] = None  # Upper bound of typical range
-    price_level: Optional[str] = None           # "low", "typical", or "high"
+    price_level: Optional[str] = None  # "low", "typical", or "high"
 
     @property
     def price_per_person(self) -> float:
@@ -49,6 +50,7 @@ class FlightOffer:
 @dataclass
 class PriceRecord:
     """Represents a historical price record."""
+
     price: float
     currency: str
     airline: str
@@ -59,6 +61,7 @@ class PriceRecord:
 @dataclass
 class FlightCheckResult:
     """Result of a flight price check."""
+
     origin: str
     destination: str
     depart_date: str
@@ -71,13 +74,14 @@ class FlightCheckResult:
     # Alternative airport results (only for primary flights with check_alternatives)
     alternatives: list["FlightCheckResult"] = field(default_factory=list)
     is_alternative: bool = False  # True if this is an alternative route check
+    flexible_days: int = 0
+    flexible_offer: Optional[FlightOffer] = None
+    flexible_message: Optional[str] = None
 
     @property
     def succeeded(self) -> bool:
         """Return whether the flight check produced a valid offer."""
-        return self.date_unavailable or (
-            self.offer is not None and self.error_message is None
-        )
+        return self.date_unavailable or (self.offer is not None and self.error_message is None)
 
     @property
     def cheaper_alternatives(self) -> list["FlightCheckResult"]:
@@ -85,8 +89,7 @@ class FlightCheckResult:
         if not self.offer:
             return []
         return [
-            alt for alt in self.alternatives
-            if alt.offer and alt.offer.price < self.offer.price
+            alt for alt in self.alternatives if alt.offer and alt.offer.price < self.offer.price
         ]
 
 
@@ -110,3 +113,33 @@ class Notifier(ABC):
             True if summary was sent successfully, False otherwise
         """
         pass
+
+
+def flexible_summary(result: FlightCheckResult) -> list[str]:
+    """Shared plain-text summary for independently flexible travel dates."""
+    if not result.flexible_days:
+        return []
+    lines = [f"Fechas flexibles: ±{result.flexible_days} dias en salida y regreso"]
+    if result.flexible_message:
+        lines.append(result.flexible_message)
+    alt = result.flexible_offer
+    if alt:
+        from datetime import date
+
+        lines.append(
+            f"Mejor alternativa encontrada: {alt.depart_date} → {alt.return_date or 'solo ida'}"
+        )
+        if alt.return_date:
+            days = (date.fromisoformat(alt.return_date) - date.fromisoformat(alt.depart_date)).days
+            lines.append(f"Duracion del viaje: {days} dias")
+        lines.append(f"{alt.currency} {alt.price:,.0f} · {alt.airline} · {alt.stops} escala(s)")
+        if result.offer:
+            saving = result.offer.price - alt.price
+            if saving > 0:
+                lines.append(
+                    f"Ahorro vs fechas exactas: {alt.currency} {saving:,.0f} "
+                    f"({saving / result.offer.price * 100:.1f}%)"
+                )
+            else:
+                lines.append("La alternativa encontrada no mejora el precio de las fechas exactas.")
+    return lines

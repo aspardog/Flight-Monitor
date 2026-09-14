@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Optional, Protocol
 
 from .config import AppConfig, FlightConfig
-from .notifiers.base import FlightCheckResult, FlightOffer, Notifier
+from .notifiers.base import FlightCheckResult, FlightOffer, Notifier, flexible_summary
 from .storage.sqlite import SQLiteStorage
 
 
@@ -267,6 +267,24 @@ class FlightMonitor:
         for primary_idx, alternatives in alternatives_by_primary.items():
             if primary_idx in primary_results:
                 primary_results[primary_idx].alternatives = alternatives
+
+        # Exact queries finish first; flexible discovery uses at most two extra searches per route.
+        for idx, flight in enumerate(self.config.flights):
+            result = primary_results[idx]
+            if not flight.flexible_days or result.date_unavailable:
+                continue
+            result.flexible_days = flight.flexible_days
+            fetch = getattr(self.client, "fetch_flexible_offer", None)
+            if fetch is None:
+                result.flexible_message = "El proveedor no admite fechas flexibles."
+                continue
+            offer, message = await asyncio.to_thread(fetch, flight)
+            result.flexible_offer = offer
+            result.flexible_message = message
+            if offer:
+                self.storage.insert_price(offer)
+            for line in flexible_summary(result):
+                print(f"[Flexible] {flight.origin}->{flight.destination}: {line}")
 
         # Return in original order
         return [primary_results[i] for i in range(len(self.config.flights))]

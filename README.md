@@ -844,3 +844,26 @@ Las contribuciones son bienvenidas. Por favor:
 <p align="center">
   Desarrollado con la asistencia de <a href="https://claude.ai">Claude Code</a> (Anthropic)
 </p>
+
+
+### Segunda evaluacion con fechas flexibles
+
+Agrega `flexible_days: 5` a cada vuelo de `flights.yaml` (y actualiza el secreto
+`FLIGHTS_YAML` de GitHub). Por defecto es `0`, desactivado; admite enteros de 0 a 5.
+La salida y el regreso varian **independientemente ±5 dias**: la duracion del viaje
+puede cambiar. Se excluyen salidas pasadas, regresos anteriores o iguales a la
+salida y aeropuertos distintos de los configurados.
+
+Se conserva la consulta exacta. Una consulta a Google Flights Deals busca ofertas
+en las ventanas indicadas y otra confirma la mejor alternativa devuelta usando
+Google Flights para los aeropuertos y pasajeros exactos. El resumen incluye fechas,
+duracion, precio y ahorro confirmado, o el motivo por el que no hay comparacion.
+Son ofertas seleccionadas por Google, no una exploracion exhaustiva del calendario;
+la ausencia de resultados no significa que no existan fechas mas baratas.
+
+El maximo es 3 busquedas por ruta y ejecucion (sin aeropuertos alternativos).
+Dos rutas diarias consumen hasta 186 busquedas en un mes de 31 dias. El control
+inicial de cuota reserva el maximo de la ejecucion antes de comenzar. Los fallos
+flexibles se informan sin invalidar un precio exacto obtenido correctamente.
+
+Documentacion del proveedor: https://serpapi.com/google-flights-deals-api

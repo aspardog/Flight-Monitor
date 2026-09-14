@@ -189,6 +189,13 @@ class TelegramNotifier(Notifier):
 
                 lines.append("")
 
+        from .base import flexible_summary
+        for result in results:
+            if result.flexible_days:
+                lines.append(f"{result.origin} → {result.destination}")
+                lines.extend(flexible_summary(result))
+                lines.append("")
+
         # Footer
         if any_recommended:
             lines.append("🔔 *¡Hay vuelos recomendados para comprar!*")

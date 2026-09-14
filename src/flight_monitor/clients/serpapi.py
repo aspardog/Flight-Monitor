@@ -1,6 +1,8 @@
 """SerpApi client for Google Flights searches."""
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, replace
+from datetime import date, timedelta
 from typing import Optional
 
 import requests
@@ -79,9 +81,7 @@ class SerpApiClient:
                     else None
                 ),
                 extra_credits=(
-                    int(data["extra_credits"])
-                    if data.get("extra_credits") is not None
-                    else None
+                    int(data["extra_credits"]) if data.get("extra_credits") is not None else None
                 ),
                 total_searches_left=(
                     int(data["total_searches_left"])
@@ -245,3 +245,95 @@ class SerpApiClient:
         except Exception as e:
             print(f"[SerpApi] Error inesperado: {e}")
             return None
+
+    def fetch_flexible_offer(self, flight: FlightConfig) -> tuple[Optional[FlightOffer], str]:
+        """Discover a date alternative with Deals, then confirm the exact airport quote.
+
+        Deals is curated, not an exhaustive calendar. Never fall back to a costly grid.
+        """
+        delta = timedelta(days=flight.flexible_days)
+        depart = date.fromisoformat(flight.depart_date)
+        start, end = max(date.today(), depart - delta), depart + delta
+        if start >= end:
+            return None, "No hay ventana futura suficiente para consultar fechas flexibles."
+        params: dict[str, str | int] = {
+            "engine": "google_flights_deals",
+            "api_key": self.api_key,
+            "departure_id": flight.origin,
+            "currency": flight.currency,
+            "adults": flight.adults,
+            "type": "1" if flight.return_date else "2",
+            "hl": "en",
+        }
+        back = date.fromisoformat(flight.return_date) if flight.return_date else None
+        # The natural-language query can override structured date filters in Deals.
+        # Include both windows in the query and validate every returned date below.
+        trip = "Round trip" if back else "One way"
+        query = (
+            f"{trip} to {flight.destination} departing "
+            f"{start.strftime('%B %d %Y')} to {end.strftime('%B %d %Y')}"
+        )
+        if back:
+            query += (
+                f" returning {(back - delta).strftime('%B %d %Y')}"
+                f" to {(back + delta).strftime('%B %d %Y')}"
+            )
+        params["query"] = query
+        try:
+            response = requests.get(self.BASE_URL, params=params, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            if "error" in data:
+                return None, "No se pudo completar la busqueda flexible del proveedor."
+            candidates: list[tuple[float, str, Optional[str]]] = []
+            for deal in data.get("deals", []):
+                try:
+                    if (
+                        deal.get("departure_airport_code") != flight.origin
+                        or deal.get("arrival_airport_code") != flight.destination
+                    ):
+                        continue
+                    dep = date.fromisoformat(deal.get("outbound_date") or deal["start_date"])
+                    ret = (
+                        date.fromisoformat(deal.get("return_date") or deal["end_date"])
+                        if back
+                        else None
+                    )
+                    price = float(deal["price"])
+                    if not math.isfinite(price) or price <= 0 or not start <= dep <= end:
+                        continue
+                    if back and (
+                        ret is None or not back - delta <= ret <= back + delta or ret <= dep
+                    ):
+                        continue
+                    dates = (dep.isoformat(), ret.isoformat() if ret else None)
+                    if dates == (flight.depart_date, flight.return_date):
+                        continue
+                    candidates.append((price, *dates))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if not candidates:
+                return (
+                    None,
+                    "Google no devolvio alternativas en este rango; no implica que no existan.",
+                )
+            _, dep_str, ret_str = min(candidates, key=lambda item: item[0])
+            offer = self.fetch_cheapest_offer(
+                replace(
+                    flight,
+                    depart_date=dep_str,
+                    return_date=ret_str,
+                    flexible_days=0,
+                )
+            )
+            if offer is None:
+                return None, "No se pudo confirmar el precio de la alternativa flexible."
+            return (
+                offer,
+                "Oferta seleccionada por Google; no es una revision exhaustiva.",
+            )
+        except (requests.exceptions.RequestException, ValueError, TypeError, KeyError):
+            return (
+                None,
+                "No se pudo completar la busqueda flexible; se mantienen las fechas exactas.",
+            )

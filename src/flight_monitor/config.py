@@ -20,6 +20,11 @@ class FlightConfig:
     adults: int = 1
     currency: str = "USD"
     check_alternatives: bool = False  # Opt-in for alternative airports
+    flexible_days: int = 0
+
+    def __post_init__(self) -> None:
+        if type(self.flexible_days) is not int or not 0 <= self.flexible_days <= 5:
+            raise ValueError("flexible_days debe ser un entero entre 0 y 5")
 
 
 @dataclass
@@ -99,6 +104,7 @@ def load_flights_from_yaml(path: Path) -> list[FlightConfig]:
             adults=flight_data.get("adults", 1),
             currency=flight_data.get("currency", "USD"),
             check_alternatives=flight_data.get("check_alternatives", False),
+            flexible_days=flight_data.get("flexible_days", 0),
         ))
 
     return flights

@@ -156,6 +156,9 @@ class EmailNotifier(Notifier):
         lines.append(f"✈️  VUELO: {route} ({trip_type})")
         lines.append("─" * 58)
 
+        from .base import flexible_summary
+        lines.extend(flexible_summary(result))
+
         # Dates section
         depart_formatted = format_date_spanish(result.depart_date)
         lines.append(f"  📅 Ida:        {depart_formatted}")

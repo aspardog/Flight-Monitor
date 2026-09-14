@@ -54,7 +54,12 @@ def main() -> None:
         print("[Error] SerpApi no devolvio cuota restante. Se detiene para evitar consumo.")
         raise SystemExit(1)
 
-    if remaining_searches <= config.serpapi_min_searches_left:
+    required_searches = sum(
+        1 + (len(config.airport_alternatives.get(f.destination, []))
+             if f.check_alternatives else 0) + (2 if f.flexible_days else 0)
+        for f in config.flights
+    )
+    if remaining_searches - required_searches < config.serpapi_min_searches_left:
         plan_name = account_status.plan_name or "plan desconocido"
         print(
             "[Error] Cuota SerpApi baja: "

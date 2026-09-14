@@ -15,6 +15,7 @@ flights:
     return_date: "2026-12-15"   # Omitir para solo ida
     adults: 1
     currency: USD
+    flexible_days: 5       # +/-5 dias en salida y regreso; 0 desactiva
 
   # Ejemplo 2: Solo ida
   - origin: BOG
