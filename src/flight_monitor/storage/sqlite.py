@@ -1,7 +1,9 @@
 """SQLite storage backend for price history."""
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from typing import Generator
 
 from ..notifiers.base import FlightOffer, PriceRecord
 
@@ -19,8 +21,14 @@ class SQLiteStorage:
         self.db_path = db_path
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        conn = sqlite3.connect(self.db_path)
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         """Create the prices table if it doesn't exist."""

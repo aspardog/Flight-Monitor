@@ -78,7 +78,7 @@ class FlexibleTests(unittest.TestCase):
     def test_config_and_summary(self) -> None:
         for invalid in (-1, 6, True, "5"):
             with self.assertRaises(ValueError):
-                FlightConfig("BOG", "SMR", "2099-12-27", flexible_days=invalid)
+                FlightConfig("BOG", "SMR", "2099-12-27", flexible_days=invalid)  # type: ignore[arg-type]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "flights.yaml"
             path.write_text(
