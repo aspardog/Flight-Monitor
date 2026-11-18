@@ -250,6 +250,81 @@ class EmailNotifier(Notifier):
 
         return lines
 
+    def _build_country_section(self, results: list[FlightCheckResult]) -> list[str]:
+        """Build the closing section with other cities of each destination country."""
+        relevant = [r for r in results if r.country_alternatives or r.country_message]
+        if not relevant:
+            return []
+
+        lines = [
+            "═" * 58,
+            "        🌎  ALTERNATIVAS EN EL MISMO PAIS  🌎",
+            "═" * 58,
+            "",
+            "  Otras ciudades del pais de destino, en tus mismas fechas exactas.",
+            "",
+        ]
+
+        for result in relevant:
+            country = f" ({result.country_name})" if result.country_name else ""
+            lines.append(f"  ✈️  {result.origin} → {result.destination}{country}")
+
+            dates = format_date_spanish(result.depart_date)
+            if result.return_date:
+                dates += f" → {format_date_spanish(result.return_date)}"
+            lines.append(f"     {dates}")
+
+            reference = result.offer
+            if reference:
+                lines.append(
+                    f"     Precio de referencia: {reference.currency} {reference.price:,.0f}"
+                )
+            lines.append("")
+
+            for alt in result.country_alternatives:
+                offer = alt.offer
+                saving = alt.saving_vs(reference)
+                saving_pct = alt.saving_pct_vs(reference)
+                indicator = "🟢" if saving is not None and saving > 0 else "⚪"
+
+                lines.append(f"    {indicator} {result.origin} → {alt.destination}  {alt.city}")
+
+                price_line = f"       {offer.currency} {offer.price:,.0f}"
+                if saving is not None and saving_pct is not None:
+                    if saving > 0:
+                        price_line += (
+                            f" · {saving_pct:.0f}% mas barato "
+                            f"(ahorras {offer.currency} {saving:,.0f})"
+                        )
+                    else:
+                        price_line += f" · {abs(saving_pct):.0f}% mas caro"
+                lines.append(price_line)
+
+                stops_text = "Directo" if offer.stops == 0 else f"{offer.stops} escala(s)"
+                detail = f"       {offer.airline} · {stops_text}"
+                if offer.duration_formatted:
+                    detail += f" · {offer.duration_formatted}"
+                lines.append(detail)
+
+                lines.append(
+                    "       🔗 "
+                    + build_google_flights_url(
+                        result.origin,
+                        alt.destination,
+                        result.depart_date,
+                        result.return_date,
+                    )
+                )
+                lines.append("")
+
+            if result.country_missing:
+                lines.append(f"    ℹ️  Sin itinerarios: {', '.join(result.country_missing)}")
+            if result.country_message:
+                lines.append(f"    ℹ️  {result.country_message}")
+            lines.append("")
+
+        return lines
+
     def send_summary(self, results: list[FlightCheckResult]) -> bool:
         """Send daily summary email with all flight check results."""
         if not self.is_configured():
@@ -286,6 +361,9 @@ class EmailNotifier(Notifier):
                 lines.extend(self._build_flight_detail(result))
                 if result.recommended:
                     any_recommended = True
+
+        # Country alternatives (closing section)
+        lines.extend(self._build_country_section(results))
 
         # Footer
         lines.extend([

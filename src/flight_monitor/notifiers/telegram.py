@@ -189,12 +189,21 @@ class TelegramNotifier(Notifier):
 
                 lines.append("")
 
-        from .base import flexible_summary
+        from .base import country_summary, flexible_summary
         for result in results:
             if result.flexible_days:
                 lines.append(f"{result.origin} → {result.destination}")
                 lines.extend(flexible_summary(result))
                 lines.append("")
+
+        for result in results:
+            summary = country_summary(result, include_notes=False)
+            if not summary:
+                continue
+            country = f" en {result.country_name}" if result.country_name else ""
+            lines.append(f"🌎 *Otras ciudades{country}* (mismas fechas)")
+            lines.extend(f"   • {line}" for line in summary)
+            lines.append("")
 
         # Footer
         if any_recommended:

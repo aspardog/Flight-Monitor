@@ -3,12 +3,12 @@
 import math
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
 from ..config import FlightConfig
-from ..notifiers.base import FlightOffer
+from ..notifiers.base import CountryAlternative, FlightOffer
 
 
 @dataclass(frozen=True)
@@ -175,32 +175,10 @@ class SerpApiClient:
                 print("[SerpApi] No se encontraron vuelos validos")
                 return None
 
-            price = cheapest.get("price", 0)
-
-            # Extract flight details from first leg
-            flights_info = cheapest.get("flights", [])
-            if not flights_info:
+            offer = self._build_offer(cheapest, flight, price_category=price_category)
+            if offer is None:
                 print("[SerpApi] Respuesta sin detalles de vuelo")
                 return None
-
-            first_flight = flights_info[0]
-            airline = first_flight.get("airline", "Unknown")
-
-            # Build segment summary
-            segments = []
-            for seg in flights_info:
-                departure = seg.get("departure_airport", {})
-                arrival = seg.get("arrival_airport", {})
-                dep_time = seg.get("departure_airport", {}).get("time", "")
-                segments.append(
-                    f"{departure.get('id', '?')} -> {arrival.get('id', '?')} ({dep_time})"
-                )
-
-            # Calculate stops
-            stops = len(flights_info) - 1
-
-            # Extract total duration (in minutes)
-            total_duration = cheapest.get("total_duration")
 
             category_label = "LOW" if price_category == "best" else "OTHER"
             print(f"[SerpApi] Categoria de precio: {category_label}")
@@ -218,19 +196,8 @@ class SerpApiClient:
             if price_level:
                 print(f"[SerpApi] Nivel de precio Google: {price_level.upper()}")
 
-            return FlightOffer(
-                price=float(price),
-                currency=flight.currency,
-                airline=airline,
-                segments=segments,
-                stops=stops,
-                origin=flight.origin,
-                destination=flight.destination,
-                depart_date=flight.depart_date,
-                return_date=flight.return_date,
-                adults=flight.adults,
-                price_category=price_category,
-                total_duration=int(total_duration) if total_duration else None,
+            return replace(
+                offer,
                 typical_price_low=float(typical_low) if typical_low else None,
                 typical_price_high=float(typical_high) if typical_high else None,
                 price_level=price_level,
@@ -245,6 +212,151 @@ class SerpApiClient:
         except Exception as e:
             print(f"[SerpApi] Error inesperado: {e}")
             return None
+
+    def _build_offer(
+        self,
+        itinerary: dict[str, Any],
+        flight: FlightConfig,
+        price_category: str = "other",
+        destination: Optional[str] = None,
+    ) -> Optional[FlightOffer]:
+        """Build a FlightOffer from one itinerary, without price insights."""
+        legs = itinerary.get("flights") or []
+        if not legs:
+            return None
+
+        raw_price = itinerary.get("price")
+        if raw_price is None:
+            return None
+        try:
+            price = float(raw_price)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(price) or price <= 0:
+            return None
+
+        segments = []
+        for seg in legs:
+            departure = seg.get("departure_airport", {})
+            arrival = seg.get("arrival_airport", {})
+            dep_time = departure.get("time", "")
+            segments.append(
+                f"{departure.get('id', '?')} -> {arrival.get('id', '?')} ({dep_time})"
+            )
+
+        total_duration = itinerary.get("total_duration")
+
+        return FlightOffer(
+            price=price,
+            currency=flight.currency,
+            airline=legs[0].get("airline", "Unknown"),
+            segments=segments,
+            stops=len(legs) - 1,
+            origin=flight.origin,
+            destination=destination or flight.destination,
+            depart_date=flight.depart_date,
+            return_date=flight.return_date,
+            adults=flight.adults,
+            price_category=price_category,
+            total_duration=int(total_duration) if total_duration else None,
+        )
+
+    @staticmethod
+    def _arrival_cities(data: dict[str, Any]) -> dict[str, str]:
+        """Map arrival airport code -> city name from the response metadata."""
+        cities: dict[str, str] = {}
+        for group in data.get("airports", []):
+            for entry in group.get("arrival", []):
+                code = entry.get("airport", {}).get("id")
+                city = entry.get("city")
+                if code and city:
+                    cities.setdefault(code, city)
+        return cities
+
+    def fetch_country_offers(
+        self, flight: FlightConfig, destinations: list[str]
+    ) -> tuple[list[CountryAlternative], list[str], str]:
+        """Price other cities of the destination country with a single search.
+
+        Google Flights accepts several arrival airports in one query, so the whole
+        country comparison costs one search. Such responses carry no price_insights
+        and no best_flights, so every alternative is category "other" and never
+        drives a purchase recommendation.
+
+        Returns:
+            Tuple of (alternatives sorted by price, destinations without itineraries, message)
+        """
+        if not destinations:
+            return [], [], ""
+
+        params: dict[str, str | int] = {
+            "engine": "google_flights",
+            "api_key": self.api_key,
+            "departure_id": flight.origin,
+            "arrival_id": ",".join(destinations),
+            "outbound_date": flight.depart_date,
+            "adults": flight.adults,
+            "currency": flight.currency,
+            "type": "1" if flight.return_date else "2",
+            "sort_by": "2",  # cheapest first, so each airport surfaces its best price
+            "hl": "es",
+        }
+        if flight.return_date:
+            params["return_date"] = flight.return_date
+
+        try:
+            response = requests.get(self.BASE_URL, params=params, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            if "error" in data:
+                return [], list(destinations), "El proveedor no devolvio alternativas del pais."
+        except (requests.exceptions.RequestException, ValueError, TypeError, KeyError) as e:
+            print(f"[SerpApi] Error en alternativas por pais: {self._sanitize_error(e)}")
+            return (
+                [],
+                list(destinations),
+                "No se pudo completar la busqueda de alternativas del pais.",
+            )
+
+        wanted = set(destinations)
+        cities = self._arrival_cities(data)
+        cheapest: dict[str, FlightOffer] = {}
+
+        itineraries = list(data.get("best_flights", [])) + list(data.get("other_flights", []))
+        for itinerary in itineraries:
+            legs = itinerary.get("flights") or []
+            if not legs:
+                continue
+            # On round trips the response only carries the outbound legs.
+            arrival = legs[-1].get("arrival_airport", {}).get("id")
+            if arrival not in wanted:
+                continue
+            offer = self._build_offer(itinerary, flight, destination=arrival)
+            if offer is None:
+                continue
+            current = cheapest.get(arrival)
+            if current is None or offer.price < current.price:
+                cheapest[arrival] = offer
+
+        alternatives = [
+            CountryAlternative(destination=code, city=cities.get(code, code), offer=offer)
+            for code, offer in cheapest.items()
+        ]
+        alternatives.sort(key=lambda alt: alt.price)
+        missing = [code for code in destinations if code not in cheapest]
+
+        if not alternatives:
+            return (
+                [],
+                missing,
+                "Google no devolvio itinerarios para los destinos alternativos.",
+            )
+
+        return (
+            alternatives,
+            missing,
+            "Mismas fechas exactas, una sola consulta a Google Flights.",
+        )
 
     def fetch_flexible_offer(self, flight: FlightConfig) -> tuple[Optional[FlightOffer], str]:
         """Discover a date alternative with Deals, then confirm the exact airport quote.

@@ -59,6 +59,33 @@ class PriceRecord:
 
 
 @dataclass
+class CountryAlternative:
+    """Another city in the same country, priced for the exact same dates."""
+
+    destination: str  # IATA code
+    city: str  # City name as returned by Google
+    offer: FlightOffer
+
+    @property
+    def price(self) -> float:
+        """Total price of the alternative."""
+        return self.offer.price
+
+    def saving_vs(self, reference: Optional[FlightOffer]) -> Optional[float]:
+        """Return how much cheaper this is than the monitored route (None if unknown)."""
+        if reference is None:
+            return None
+        return reference.price - self.offer.price
+
+    def saving_pct_vs(self, reference: Optional[FlightOffer]) -> Optional[float]:
+        """Return the saving as a percentage of the monitored route price."""
+        saving = self.saving_vs(reference)
+        if saving is None or reference is None or reference.price <= 0:
+            return None
+        return saving / reference.price * 100
+
+
+@dataclass
 class FlightCheckResult:
     """Result of a flight price check."""
 
@@ -77,6 +104,11 @@ class FlightCheckResult:
     flexible_days: int = 0
     flexible_offer: Optional[FlightOffer] = None
     flexible_message: Optional[str] = None
+    # Other cities in the destination country (only for primary flights)
+    country_name: Optional[str] = None
+    country_alternatives: list[CountryAlternative] = field(default_factory=list)
+    country_missing: list[str] = field(default_factory=list)
+    country_message: Optional[str] = None
 
     @property
     def succeeded(self) -> bool:
@@ -113,6 +145,34 @@ class Notifier(ABC):
             True if summary was sent successfully, False otherwise
         """
         pass
+
+
+def country_summary(result: FlightCheckResult, include_notes: bool = True) -> list[str]:
+    """Shared plain-text summary for same-country destination alternatives."""
+    if not result.country_alternatives and not result.country_message:
+        return []
+
+    reference = result.offer
+    lines = []
+    for alt in result.country_alternatives:
+        saving = alt.saving_vs(reference)
+        saving_pct = alt.saving_pct_vs(reference)
+        detail = f"{alt.offer.currency} {alt.price:,.0f}"
+        if saving is not None and saving_pct is not None:
+            if saving > 0:
+                detail += f" · {saving_pct:.0f}% mas barato (ahorras {saving:,.0f})"
+            else:
+                detail += f" · {abs(saving_pct):.0f}% mas caro"
+        lines.append(f"{result.origin} → {alt.destination} ({alt.city}): {detail}")
+
+    if include_notes:
+        if result.country_missing:
+            lines.append(f"Sin itinerarios: {', '.join(result.country_missing)}")
+        if result.country_message:
+            lines.append(result.country_message)
+    elif not lines and result.country_message:
+        lines.append(result.country_message)
+    return lines
 
 
 def flexible_summary(result: FlightCheckResult) -> list[str]:

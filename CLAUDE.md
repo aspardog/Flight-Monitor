@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Flight Monitor tracks flight prices using Google Flights (via SerpApi) and sends a **daily summary** (email/Telegram) with purchase recommendations based on Google's typical price range. Supports monitoring multiple flights concurrently, including optional destination-airport alternatives from `airports.yaml`.
+Flight Monitor tracks flight prices using Google Flights (via SerpApi) and sends a **daily summary** (email/Telegram) with purchase recommendations based on Google's typical price range. Supports monitoring multiple flights concurrently, including optional destination-airport alternatives and same-country city alternatives from `airports.yaml`.
 
 ## Commands (UV)
 
@@ -45,6 +45,8 @@ The recommended production setup uses `--scheduled` with an hourly cron/launchd 
 **API usage with 2 flights and 2 slots/day:**
 - 2 checks/day × 2 flights = 4 API calls/day (~120/month)
 - SerpApi free tier: 250 searches/month as of June 2026
+- Per flight and run: 1 exact search, +2 with `flexible_days`, +1 with `country_alternatives`
+  (one multi-airport query covers the whole country)
 
 ## GitHub Actions
 
@@ -91,6 +93,7 @@ src/flight_monitor/
 2. `FlightMonitor.check_all_flights_async()` spawns concurrent checks
 3. `FlightMonitor.expand_with_alternatives()` adds destination alternatives when `check_alternatives: true`
 4. `SerpApiClient.fetch_cheapest_offer()` queries Google Flights, returns `FlightOffer` with `typical_price_low`, `typical_price_high`, `price_level`, `total_duration`
+4b. `FlightMonitor._attach_country_alternatives()` calls `SerpApiClient.fetch_country_offers()` once per flight with `country_alternatives: true`: a single search with several comma-separated `arrival_id` airports, grouped by arrival airport (cheapest per city). Such responses carry no `best_flights` and no `price_insights`, so these offers never drive a recommendation.
 5. `SQLiteStorage.insert_price()` persists the record
 6. `FlightMonitor.should_recommend()` compares `offer.price` vs `offer.typical_price_low` — recommends if price is below the typical range lower bound
 7. `FlightMonitor._send_summary()` calls `notifier.send_summary(results)` on all configured notifiers
@@ -105,6 +108,7 @@ Both Email and Telegram notifiers include:
 - **Quick summary table**: Overview of all flights at the top (email only)
 - **Google Flights links**: Direct search URLs (email only)
 - **Cheaper alternatives**: shown when destination alternatives are enabled and cheaper than the primary route
+- **Same-country alternatives**: closing section (email) / compact block (Telegram) listing other cities of the destination country for the exact same dates, sorted by price, with savings vs the monitored route and the destinations Google returned no itinerary for
 
 Notification failures are warnings after successful flight checks. They do not make `run_once()` fail or trigger a scheduled retry.
 
@@ -142,14 +146,26 @@ flights:
     adults: 1                  # optional, default 1
     currency: USD              # optional, default USD
     check_alternatives: true    # optional, default false; uses airports.yaml
+    flexible_days: 5            # optional, default 0; integer 0-5
+    country_alternatives: true  # optional, default false; uses airports.yaml countries
+    country_alternatives_max: 4 # optional, default 4; integer 1-6
 ```
 
 Backwards-compatible: single flight can also be set via `FLIGHT_ORIGIN`, `FLIGHT_DESTINATION`, `FLIGHT_DEPART_DATE` env vars.
 
-**Airport alternatives** (`airports.yaml`):
+**Airport alternatives** (`airports.yaml`, `alternatives:` block):
 - Only destination alternatives are expanded; the origin remains fixed.
 - Each alternative destination is an additional SerpApi flight search.
 - Alternatives are attached to the primary result and reported only when cheaper.
+
+**Country catalog** (`airports.yaml`, `countries:` block):
+- `countries: {CODE: {name, airports: [...]}}`; the airport lists are the single source
+  of truth and `load_countries()` derives the airport → country index from them.
+- `country_destinations(config, flight)` excludes both the monitored destination and the
+  origin (domestic trips), then caps the list at `country_alternatives_max`.
+- The whole country comparison costs one search; when the SerpApi quota only covers the
+  core checks, `__main__.py` passes `country_alternatives_enabled=False` and the run
+  continues without it.
 
 ## Adding a New Notifier
 
