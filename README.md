@@ -559,7 +559,9 @@ pendiente antes de consumir SerpApi.
 
 La forma mas confiable de ejecutar el monitor es usando GitHub Actions. No requiere que tu computadora este encendida.
 
-El workflow `.github/workflows/monitor.yml` se ejecuta automaticamente a las 11:00 AM hora Colombia (16:00 UTC) todos los dias.
+El workflow `.github/workflows/monitor.yml` se ejecuta automaticamente a las 10:41 AM hora Colombia (15:41 UTC) todos los dias. El minuto no es redondo a proposito: GitHub retrasa varias horas los crons programados en punto.
+
+**Repositorio sin commits:** GitHub desactiva los workflows programados de repositorios publicos tras 60 dias sin actividad. El workflow `.github/workflows/keepalive.yml` corre cada lunes y vuelve a habilitar los workflows programados mediante la API, lo que reinicia ese contador sin commits de relleno. Si alguna vez llega el correo "workflow has been disabled", ejecutalo manualmente (Actions → Keepalive → Run workflow) o usa `gh workflow enable monitor.yml`.
 
 Antes de consultar vuelos, el programa llama al Account API de SerpApi para verificar cuantas búsquedas quedan. Si la cuota restante cae por debajo de `SERPAPI_MIN_SEARCHES_LEFT`, la ejecución se corta antes de gastar más búsquedas.
 

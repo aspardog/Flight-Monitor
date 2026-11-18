@@ -50,8 +50,14 @@ The recommended production setup uses `--scheduled` with an hourly cron/launchd 
 
 ## GitHub Actions
 
-The workflow `.github/workflows/monitor.yml` runs automatically at 11:00 AM Colombia
-time (16:00 UTC) daily.
+The workflow `.github/workflows/monitor.yml` runs automatically at 10:41 AM Colombia
+time (15:41 UTC) daily. The odd minute is deliberate: GitHub delays top-of-the-hour
+crons by hours under load.
+
+The workflow `.github/workflows/keepalive.yml` runs weekly and re-enables every scheduled
+workflow (`monitor.yml`, `codeql.yml`, itself) through the GitHub API. GitHub disables
+scheduled workflows in public repositories after 60 days without activity; re-enabling
+resets that counter. Add any new scheduled workflow to its list.
 
 The workflow `.github/workflows/ci.yml` runs Ruff, mypy, and the functional test suite on
 pushes to `main` and pull requests.
