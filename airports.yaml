@@ -29,3 +29,40 @@ alternatives:
   BCN: [GRO, REU]           # Barcelona -> Girona, Reus
 
   # Add more airports as needed
+
+# Paises y sus aeropuertos principales.
+# Usados cuando un vuelo tiene country_alternatives: true, para comparar otras
+# ciudades del mismo pais en las mismas fechas exactas.
+# El orden importa: al aplicar country_alternatives_max se conservan los primeros.
+countries:
+  CO:
+    name: Colombia
+    airports: [BOG, MDE, CTG, SMR, BAQ, ADZ, CLO, PEI]
+
+  MX:
+    name: Mexico
+    airports: [MEX, CUN, GDL, MTY, TIJ, PVR, SJD]
+
+  ES:
+    name: Espana
+    airports: [MAD, BCN, AGP, VLC, SVQ, PMI]
+
+  PE:
+    name: Peru
+    airports: [LIM, CUZ, AQP, PIU]
+
+  AR:
+    name: Argentina
+    airports: [EZE, AEP, COR, MDZ, BRC]
+
+  BR:
+    name: Brasil
+    airports: [GRU, GIG, BSB, SSA, REC, FOR]
+
+  CL:
+    name: Chile
+    airports: [SCL, CJC, PMC, IQQ]
+
+  US:
+    name: Estados Unidos
+    airports: [MIA, JFK, LAX, ORD, FLL, IAH, MCO]

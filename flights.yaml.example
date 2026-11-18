@@ -34,6 +34,18 @@ flights:
     currency: USD
     check_alternatives: true
 
+  # Ejemplo 4: Comparar otras ciudades del mismo pais, en las mismas fechas
+  # El pais se deduce de airports.yaml (bloque countries). Para GDL revisa
+  # MEX, CUN, MTY y TIJ con UNA sola busqueda extra por corrida.
+  - origin: BOG
+    destination: GDL
+    depart_date: "2026-10-15"
+    return_date: "2026-10-25"
+    adults: 1
+    currency: COP
+    country_alternatives: true
+    country_alternatives_max: 4   # Destinos por consulta (1 a 6, default 4)
+
 # Codigos IATA comunes:
 # BOG = Bogota       MDE = Medellin     CLO = Cali
 # MIA = Miami        JFK = New York     LAX = Los Angeles

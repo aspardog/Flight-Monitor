@@ -21,10 +21,26 @@ class FlightConfig:
     currency: str = "USD"
     check_alternatives: bool = False  # Opt-in for alternative airports
     flexible_days: int = 0
+    country_alternatives: bool = False  # Opt-in for other cities in the same country
+    country_alternatives_max: int = 4  # Destinations per country search
 
     def __post_init__(self) -> None:
         if type(self.flexible_days) is not int or not 0 <= self.flexible_days <= 5:
             raise ValueError("flexible_days debe ser un entero entre 0 y 5")
+        if (
+            type(self.country_alternatives_max) is not int
+            or not 1 <= self.country_alternatives_max <= 6
+        ):
+            raise ValueError("country_alternatives_max debe ser un entero entre 1 y 6")
+
+
+@dataclass
+class CountryConfig:
+    """Main airports of a country, used for same-country destination comparisons."""
+
+    code: str
+    name: str
+    airports: list[str]
 
 
 @dataclass
@@ -58,6 +74,10 @@ class AppConfig:
     # Airport alternatives mapping (destination -> [alternative destinations])
     airport_alternatives: dict[str, list[str]] = field(default_factory=dict)
 
+    # Country catalog (code -> CountryConfig) and its derived airport -> country index
+    countries: dict[str, CountryConfig] = field(default_factory=dict)
+    airport_country: dict[str, str] = field(default_factory=dict)
+
 
 def load_airport_alternatives(path: Path) -> dict[str, list[str]]:
     """Load airport alternatives mapping from YAML file."""
@@ -72,6 +92,42 @@ def load_airport_alternatives(path: Path) -> dict[str, list[str]]:
 
     alternatives: dict[str, list[str]] = data["alternatives"]
     return alternatives
+
+
+def load_countries(path: Path) -> tuple[dict[str, CountryConfig], dict[str, str]]:
+    """Load the country catalog and derive the airport -> country index from it.
+
+    The airport lists are the single source of truth: an airport belongs to the
+    first country that lists it.
+    """
+    if not path.exists():
+        return {}, {}
+
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+
+    if not data or "countries" not in data:
+        return {}, {}
+
+    countries: dict[str, CountryConfig] = {}
+    airport_country: dict[str, str] = {}
+
+    for code, entry in (data["countries"] or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        airports = [str(a).upper() for a in entry.get("airports", []) if a]
+        if not airports:
+            continue
+        country_code = str(code).upper()
+        countries[country_code] = CountryConfig(
+            code=country_code,
+            name=entry.get("name", country_code),
+            airports=airports,
+        )
+        for airport in airports:
+            airport_country.setdefault(airport, country_code)
+
+    return countries, airport_country
 
 
 def _normalize_date(value: str | date | None) -> str | None:
@@ -105,6 +161,8 @@ def load_flights_from_yaml(path: Path) -> list[FlightConfig]:
             currency=flight_data.get("currency", "USD"),
             check_alternatives=flight_data.get("check_alternatives", False),
             flexible_days=flight_data.get("flexible_days", 0),
+            country_alternatives=flight_data.get("country_alternatives", False),
+            country_alternatives_max=flight_data.get("country_alternatives_max", 4),
         ))
 
     return flights
@@ -139,6 +197,7 @@ def load_config(
     # Load airport alternatives
     airports_file = airports_path or Path("airports.yaml")
     airport_alternatives = load_airport_alternatives(airports_file)
+    countries, airport_country = load_countries(airports_file)
     scheduled_times_raw = os.getenv("SCHEDULED_TIMES", "11:00")
     scheduled_times = [item.strip() for item in scheduled_times_raw.split(",") if item.strip()]
 
@@ -175,4 +234,6 @@ def load_config(
         ),
         flights=flights,
         airport_alternatives=airport_alternatives,
+        countries=countries,
+        airport_country=airport_country,
     )

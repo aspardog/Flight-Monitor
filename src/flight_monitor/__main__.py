@@ -5,7 +5,7 @@ from datetime import datetime
 
 from .clients.serpapi import SerpApiClient
 from .config import load_config
-from .monitor import FlightMonitor
+from .monitor import FlightMonitor, country_destinations
 from .notifiers.email import EmailNotifier
 from .notifiers.telegram import TelegramNotifier
 from .scheduler import RetryScheduler
@@ -54,12 +54,18 @@ def main() -> None:
         print("[Error] SerpApi no devolvio cuota restante. Se detiene para evitar consumo.")
         raise SystemExit(1)
 
-    required_searches = sum(
+    # Core budget: exact quotes, metro-area alternatives and flexible dates.
+    core_searches = sum(
         1 + (len(config.airport_alternatives.get(f.destination, []))
              if f.check_alternatives else 0) + (2 if f.flexible_days else 0)
         for f in config.flights
     )
-    if remaining_searches - required_searches < config.serpapi_min_searches_left:
+    # Optional budget: one extra search per flight comparing its destination country.
+    country_searches = sum(
+        1 for f in config.flights if country_destinations(config, f)
+    )
+
+    if remaining_searches - core_searches < config.serpapi_min_searches_left:
         plan_name = account_status.plan_name or "plan desconocido"
         print(
             "[Error] Cuota SerpApi baja: "
@@ -68,6 +74,17 @@ def main() -> None:
             "Se detiene para evitar consumo adicional."
         )
         raise SystemExit(1)
+
+    # A tight month degrades the optional comparison instead of losing the run.
+    country_alternatives_enabled = (
+        remaining_searches - core_searches - country_searches
+        >= config.serpapi_min_searches_left
+    )
+    if country_searches and not country_alternatives_enabled:
+        print(
+            "[SerpApi] Cuota justa: se omiten las alternativas por pais "
+            f"({country_searches} busqueda(s)) y se conservan los chequeos principales."
+        )
 
     print(
         "[SerpApi] Cuota disponible: "
@@ -91,7 +108,13 @@ def main() -> None:
     ]
 
     # Create monitor
-    monitor = FlightMonitor(config, client, storage, notifiers)
+    monitor = FlightMonitor(
+        config,
+        client,
+        storage,
+        notifiers,
+        country_alternatives_enabled=country_alternatives_enabled,
+    )
 
     if args.scheduled:
         scheduler = RetryScheduler(

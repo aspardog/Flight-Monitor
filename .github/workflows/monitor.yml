@@ -2,15 +2,26 @@ name: Flight Monitor
 
 on:
   schedule:
-    # Ejecutar a las 11:00 AM hora Colombia (UTC-5)
-    - cron: "0 16 * * *"
+    # 10:41 AM hora Colombia (UTC-5). Minuto no redondo a proposito: GitHub
+    # retrasa horas los crons en punto (:00) por carga. La desactivacion por
+    # 60 dias de inactividad la evita keepalive.yml.
+    - cron: "41 15 * * *"
   workflow_dispatch:
     # Permite ejecutar manualmente desde GitHub Actions
+
+permissions:
+  contents: read
+
+# Evita dos ejecuciones simultaneas (cron + manual) y resumenes duplicados.
+concurrency:
+  group: flight-monitor
+  cancel-in-progress: false
 
 jobs:
   check-flights:
     name: Check Flight Prices
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -30,7 +41,11 @@ jobs:
         run: uv sync --locked --no-editable
 
       - name: Create flights.yaml from secret
-        run: echo "${{ secrets.FLIGHTS_YAML }}" > flights.yaml
+        # Via env, not ${{ }} inside the script: quotes, $ or backticks in the
+        # YAML would otherwise be interpreted by the shell.
+        env:
+          FLIGHTS_YAML: ${{ secrets.FLIGHTS_YAML }}
+        run: printf '%s\n' "$FLIGHTS_YAML" > flights.yaml
 
       - name: Run flight monitor
         env:

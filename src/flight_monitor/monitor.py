@@ -3,10 +3,16 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from .config import AppConfig, FlightConfig
-from .notifiers.base import FlightCheckResult, FlightOffer, Notifier, flexible_summary
+from .notifiers.base import (
+    FlightCheckResult,
+    FlightOffer,
+    Notifier,
+    country_summary,
+    flexible_summary,
+)
 from .storage.sqlite import SQLiteStorage
 
 
@@ -18,6 +24,28 @@ class FlightClient(Protocol):
         ...
 
 
+def country_destinations(config: AppConfig, flight: FlightConfig) -> list[str]:
+    """Return the other airports of the destination country, capped by configuration.
+
+    Empty when the flight opted out or the destination is not in the country catalog.
+    """
+    if not flight.country_alternatives:
+        return []
+
+    country_code = config.airport_country.get(flight.destination)
+    if country_code is None:
+        return []
+
+    country = config.countries.get(country_code)
+    if country is None:
+        return []
+
+    # The origin can sit in the same country (BOG -> SMR): never route back to it.
+    excluded = {flight.destination, flight.origin}
+    others = [airport for airport in country.airports if airport not in excluded]
+    return others[: flight.country_alternatives_max]
+
+
 class FlightMonitor:
     """Monitor flight prices and send notifications on price drops."""
 
@@ -27,6 +55,7 @@ class FlightMonitor:
         client: FlightClient,
         storage: SQLiteStorage,
         notifiers: list[Notifier],
+        country_alternatives_enabled: bool = True,
     ):
         """
         Initialize the flight monitor.
@@ -36,11 +65,14 @@ class FlightMonitor:
             client: Flight API client (SerpApi, Amadeus, etc.)
             storage: Price history storage
             notifiers: List of notification plugins
+            country_alternatives_enabled: False drops the optional country searches
+                (used when the SerpApi quota only covers the core checks)
         """
         self.config = config
         self.client = client
         self.storage = storage
         self.notifiers = [n for n in notifiers if n.is_configured()]
+        self.country_alternatives_enabled = country_alternatives_enabled
 
     def calculate_discount(self, current_price: float, typical_low: float) -> float:
         """
@@ -82,6 +114,10 @@ class FlightMonitor:
     def get_destination_alternatives(self, destination: str) -> list[str]:
         """Get alternative destination airports for a given airport code."""
         return self.config.airport_alternatives.get(destination, [])
+
+    def country_destinations(self, flight: FlightConfig) -> list[str]:
+        """Get other cities of the destination country to compare against."""
+        return country_destinations(self.config, flight)
 
     def is_departure_date_unavailable(self, flight: FlightConfig) -> bool:
         """Return whether the departure date has already passed."""
@@ -286,8 +322,62 @@ class FlightMonitor:
             for line in flexible_summary(result):
                 print(f"[Flexible] {flight.origin}->{flight.destination}: {line}")
 
+        await self._attach_country_alternatives(primary_results)
+
         # Return in original order
         return [primary_results[i] for i in range(len(self.config.flights))]
+
+    async def _attach_country_alternatives(
+        self, primary_results: dict[int, FlightCheckResult]
+    ) -> None:
+        """Price other cities of the destination country: one extra search per flight.
+
+        Informative only: these offers carry no typical price range, so they never
+        drive a purchase recommendation.
+        """
+        pending: list[tuple[FlightCheckResult, FlightConfig, list[str], Any]] = []
+
+        for idx, flight in enumerate(self.config.flights):
+            result = primary_results[idx]
+            destinations = self.country_destinations(flight)
+            if not destinations or result.date_unavailable:
+                continue
+
+            country_code = self.config.airport_country.get(flight.destination)
+            country = self.config.countries.get(country_code or "")
+            result.country_name = country.name if country else None
+
+            if not self.country_alternatives_enabled:
+                result.country_message = (
+                    "Alternativas del pais omitidas para preservar cuota de SerpApi."
+                )
+                continue
+
+            fetch = getattr(self.client, "fetch_country_offers", None)
+            if fetch is None:
+                result.country_message = "El proveedor no admite alternativas por pais."
+                continue
+
+            pending.append((result, flight, destinations, fetch))
+
+        if not pending:
+            return
+
+        outcomes = await asyncio.gather(
+            *(
+                asyncio.to_thread(fetch, flight, destinations)
+                for _, flight, destinations, fetch in pending
+            )
+        )
+
+        for (result, flight, _, _), (alternatives, missing, message) in zip(pending, outcomes):
+            result.country_alternatives = alternatives
+            result.country_missing = missing
+            result.country_message = message
+            for alternative in alternatives:
+                self.storage.insert_price(alternative.offer)
+            for line in country_summary(result):
+                print(f"[Pais] {flight.origin}->{flight.destination}: {line}")
 
     def check_all_flights(self) -> list[FlightCheckResult]:
         """Check all configured flights (sync wrapper)."""

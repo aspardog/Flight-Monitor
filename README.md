@@ -14,6 +14,7 @@
 - **Clasificacion inteligente**: Distingue entre precios LOW (mejores ofertas) y OTHER usando la clasificacion de Google Flights
 - **Alertas precisas**: Recomienda comprar cuando el precio esta **por debajo del rango tipico de Google Flights**
 - **Aeropuertos alternativos**: Opcionalmente compara destinos cercanos definidos en `airports.yaml`
+- **Alternativas por pais**: Con `country_alternatives: true` compara otras ciudades del pais de destino en las mismas fechas, con una sola busqueda extra por ruta
 - **Notificaciones flexibles**: Soporte para Email (Gmail SMTP) y Telegram Bot (multiples destinatarios)
 - **Persistencia**: Almacena todo el historial de precios en SQLite para analisis
 - **Optimizado para API limitada**: Disenado para el plan gratuito de SerpApi (250 llamadas/mes)
@@ -113,7 +114,7 @@ flight-monitor/
 │
 ├── .env.example                 # Plantilla de variables de entorno
 ├── flights.yaml.example         # Plantilla de vuelos a monitorear
-├── airports.yaml                # Mapa de aeropuertos alternativos
+├── airports.yaml                # Aeropuertos alternativos y catalogo de paises
 ├── pyproject.toml               # Configuracion del proyecto (UV/pip)
 └── README.md
 ```
@@ -302,6 +303,7 @@ Cada corrida envia un **resumen** de todos los vuelos monitoreados con formato v
 - ⏱️ Duracion del viaje y tiempo de vuelo
 - 🟢🟡🔴 Indicadores visuales de precio (bajo/tipico/alto)
 - 🧭 Alternativas mas baratas cuando `check_alternatives: true`
+- 🌎 Seccion final con otras ciudades del pais cuando `country_alternatives: true`
 - 🔗 Links directos a Google Flights
 - 📊 Resumen rapido al inicio
 
@@ -408,6 +410,15 @@ flights:
     return_date: "2026-12-15"
     currency: USD
     check_alternatives: true
+
+  # Comparar otras ciudades del mismo pais en las mismas fechas
+  - origin: BOG
+    destination: GDL
+    depart_date: "2026-10-15"
+    return_date: "2026-10-25"
+    currency: COP
+    country_alternatives: true
+    country_alternatives_max: 4   # Destinos por consulta (1 a 6, default 4)
 ```
 
 ### Aeropuertos Alternativos (`airports.yaml`)
@@ -420,6 +431,40 @@ Las alternativas se reportan en el resumen cuando son mas baratas que la ruta pr
 
 Cada alternativa consume una busqueda adicional de SerpApi. Una ruta con dos
 alternativas equivale a tres consultas de vuelos por corrida.
+
+### Alternativas por Pais (`country_alternatives`)
+
+Responde otra pregunta: *para estas mismas fechas exactas, que otras ciudades del
+pais de destino salen mejor*. Con `destination: GDL` compara Ciudad de Mexico,
+Cancun, Monterrey y Tijuana; el resultado va en una seccion al final del correo,
+ordenado de mas barato a mas caro y con el ahorro frente a la ruta monitoreada.
+
+El pais se deduce del bloque `countries` de `airports.yaml`, que es la unica fuente
+de verdad: un aeropuerto pertenece al primer pais que lo lista.
+
+```yaml
+countries:
+  MX:
+    name: Mexico
+    airports: [MEX, CUN, GDL, MTY, TIJ, PVR, SJD]   # el orden define la prioridad
+```
+
+Detalles importantes:
+
+- **Cuesta una sola busqueda por ruta**: Google Flights acepta varios aeropuertos de
+  llegada en la misma consulta, asi que todo el pais se compara en una llamada.
+- **Precios exactos**: son itinerarios reales para tus fechas, comparables con el
+  precio principal (no estimaciones).
+- **Nunca recomiendan comprar**: estas respuestas no traen rango tipico de Google, asi
+  que son informativas y no cambian el asunto del correo.
+- **Cobertura parcial**: Google puede no devolver itinerarios para todos los destinos
+  pedidos. Los que falten se listan como `Sin itinerarios: TIJ`.
+- **El origen se excluye**: en un viaje domestico (BOG -> SMR) nunca se consulta BOG.
+- **Degradacion por cuota**: si la cuota restante solo alcanza para los chequeos
+  principales, esta comparacion se omite y la corrida continua.
+
+Se controla por vuelo con `country_alternatives: true` y `country_alternatives_max`
+(1 a 6, default 4).
 
 ---
 
@@ -514,7 +559,9 @@ pendiente antes de consumir SerpApi.
 
 La forma mas confiable de ejecutar el monitor es usando GitHub Actions. No requiere que tu computadora este encendida.
 
-El workflow `.github/workflows/monitor.yml` se ejecuta automaticamente a las 11:00 AM hora Colombia (16:00 UTC) todos los dias.
+El workflow `.github/workflows/monitor.yml` se ejecuta automaticamente a las 10:41 AM hora Colombia (15:41 UTC) todos los dias. El minuto no es redondo a proposito: GitHub retrasa varias horas los crons programados en punto.
+
+**Repositorio sin commits:** GitHub desactiva los workflows programados de repositorios publicos tras 60 dias sin actividad. El workflow `.github/workflows/keepalive.yml` corre cada lunes y vuelve a habilitar los workflows programados mediante la API, lo que reinicia ese contador sin commits de relleno. Si alguna vez llega el correo "workflow has been disabled", ejecutalo manualmente (Actions → Keepalive → Run workflow) o usa `gh workflow enable monitor.yml`.
 
 Antes de consultar vuelos, el programa llama al Account API de SerpApi para verificar cuantas búsquedas quedan. Si la cuota restante cae por debajo de `SERPAPI_MIN_SEARCHES_LEFT`, la ejecución se corta antes de gastar más búsquedas.
 
@@ -721,7 +768,13 @@ client = AmadeusClient(
 | 5 | 2 | 300 | Excede limite |
 
 Cuenta cada ruta consultada. Si activas `check_alternatives`, suma la ruta principal y
-cada destino alternativo.
+cada destino alternativo. `flexible_days` suma hasta 2 busquedas por ruta y
+`country_alternatives` suma exactamente 1, sin importar cuantas ciudades compare.
+
+Ejemplo con 2 rutas diarias, ambas con fechas flexibles y alternativas por pais:
+4 busquedas de base + 4 flexibles + 2 de pais = hasta 8 por corrida (248 al mes).
+Cuando la cuota restante solo cubre lo esencial, el monitor omite las alternativas
+por pais e igual completa los chequeos principales.
 
 ### Recomendaciones
 
